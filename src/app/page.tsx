@@ -17,6 +17,7 @@ export type TimelineEvent = {
   status?: "trying" | "failed" | "success";
   reason?: string;
   message?: string;
+  duration?: number; // ms
 };
 
 export type ProviderConfig = {
@@ -202,6 +203,17 @@ export default function Home() {
             <Dashboard data={data} />
           </div>
         </div>
+        <footer className="border-t border-border pt-6 flex items-center justify-center gap-1.5 text-xs text-slate-400">
+          Proudly made by{" "}
+          <a
+            href="https://github.com/vmarkuts"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-slate-600 font-semibold hover:text-blue-600 transition-colors underline underline-offset-2"
+          >
+            Vlad Markuts
+          </a>
+        </footer>
       </div>
     </main>
   );

@@ -27,6 +27,10 @@ export default function Uploader({ onUpload, loading, timeline, onAbort }: Uploa
     accept: {
       "application/pdf": [".pdf"],
       "image/jpeg": [".jpg", ".jpeg"],
+      "image/png": [".png"],
+      "image/webp": [".webp"],
+      "image/gif": [".gif"],
+      "image/tiff": [".tif", ".tiff"],
       "text/csv": [".csv"],
     },
     disabled: loading,
@@ -72,7 +76,7 @@ export default function Uploader({ onUpload, loading, timeline, onAbort }: Uploa
                 {isDragActive ? "Drop the quote here" : "Drag & drop a quote, or click to select"}
               </p>
               <p className="text-xs text-muted-foreground">
-                Supports PDF, JPG, CSV (up to 10MB)
+                Supports PDF, PNG, JPG, WebP, CSV (up to 10MB)
               </p>
             </div>
           </>
@@ -98,6 +102,12 @@ export default function Uploader({ onUpload, loading, timeline, onAbort }: Uploa
                 <span className={`flex-1 ${evt.status === "failed" ? "text-red-500 opacity-80" : evt.status === "success" ? "text-green-600 font-semibold" : "text-slate-600"}`}>
                   {evt.type === "log" ? evt.message : `${evt.model?.split("/")[1] || evt.model}${evt.reason ? ` ➔ ${evt.reason}` : ""}`}
                 </span>
+
+                {evt.duration != null && (
+                  <span className="text-slate-400 shrink-0 tabular-nums">
+                    {evt.duration >= 1000 ? `${(evt.duration / 1000).toFixed(1)}s` : `${evt.duration}ms`}
+                  </span>
+                )}
               </div>
             ))}
           </div>

@@ -99,6 +99,7 @@ CRITICAL RULES:
           
           const abortController = new AbortController();
           const timeoutId = setTimeout(() => abortController.abort(), 25000);
+          const startTime = Date.now();
 
           try {
             let res: Response;
@@ -180,8 +181,8 @@ CRITICAL RULES:
                 else reason = errObj.error?.message || errObj.error?.type || "error";
               } catch (_) { }
               
-              sendEvent("status", { model, status: "failed", reason });
-              continue; // try next model if available
+              sendEvent("status", { model, status: "failed", reason, duration: Date.now() - startTime });
+              continue;
             }
 
             const data = await res.json();
@@ -202,12 +203,12 @@ CRITICAL RULES:
               if (jsonMatch) {
                 parsedResults = JSON.parse(jsonMatch[0]);
               } else {
-                sendEvent("status", { model, status: "failed", reason: "invalid JSON response" });
+                sendEvent("status", { model, status: "failed", reason: "invalid JSON response", duration: Date.now() - startTime });
                 continue;
               }
             }
 
-            sendEvent("status", { model, status: "success" });
+            sendEvent("status", { model, status: "success", duration: Date.now() - startTime });
             sendEvent("result", { payload: parsedResults });
             success = true;
             controller.close();
@@ -216,7 +217,7 @@ CRITICAL RULES:
           } catch (fetchErr: any) {
             clearTimeout(timeoutId);
             const isTimeout = fetchErr.name === 'AbortError' || fetchErr.message.includes('timeout');
-            sendEvent("status", { model, status: "failed", reason: isTimeout ? "timeout/aborted" : "network error" });
+            sendEvent("status", { model, status: "failed", reason: isTimeout ? "timeout/aborted" : "network error", duration: Date.now() - startTime });
             continue;
           }
         }
