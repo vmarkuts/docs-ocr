@@ -201,7 +201,7 @@ CRITICAL RULES:
             try {
               parsedResults = JSON.parse(cleanJsonStr);
             } catch (parseError) {
-              const jsonMatch = cleanJsonStr.match(/\[.*\]/s);
+              const jsonMatch = cleanJsonStr.match(/\[[\s\S]*\]/);
               if (jsonMatch) {
                 parsedResults = JSON.parse(jsonMatch[0]);
               } else {
