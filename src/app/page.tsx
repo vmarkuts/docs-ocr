@@ -19,24 +19,57 @@ export type TimelineEvent = {
   message?: string;
 };
 
+export type ProviderConfig = {
+  provider: "builtin" | "openrouter" | "openai" | "anthropic";
+  apiKey: string;
+  model: string;
+};
+
+const DEFAULT_MODELS: Record<ProviderConfig["provider"], string> = {
+  builtin: "",
+  openrouter: "openrouter/auto",
+  openai: "gpt-4o",
+  anthropic: "claude-sonnet-4-5"
+};
+
 export default function Home() {
   const [data, setData] = useState<ParsedItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  
+  const [providerConfig, setProviderConfig] = useState<ProviderConfig>({
+    provider: "builtin",
+    apiKey: "",
+    model: ""
+  });
+  
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleAbort = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setTimeline(prev => [...prev, { type: "log", message: "❌ Request aborted by user." }]);
+      setLoading(false);
+    }
+  };
 
   const handleUpload = async (file: File) => {
     setLoading(true);
     setError(null);
     setTimeline([]);
 
+    abortControllerRef.current = new AbortController();
+
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("providerConfig", JSON.stringify(providerConfig));
 
     try {
       const response = await fetch("/api/extract", {
         method: "POST",
         body: formData,
+        signal: abortControllerRef.current.signal,
       });
 
       if (!response.body) throw new Error("No response body");
@@ -63,7 +96,7 @@ export default function Home() {
                   throw new Error(event.message);
                 } else if (event.type === "result") {
                   setData((prev) => [...prev, ...event.payload]);
-                  setTimeout(() => setLoading(false), 500); // little delay to see success
+                  setTimeout(() => setLoading(false), 500);
                   return;
                 } else {
                   setTimeline((prev) => {
@@ -87,6 +120,10 @@ export default function Home() {
       }
       setLoading(false);
     } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log("Upload aborted");
+        return; 
+      }
       setError(err.message || "Something went wrong reading server stream.");
       setLoading(false);
     }
@@ -106,7 +143,54 @@ export default function Home() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-1 space-y-4">
-            <Uploader onUpload={handleUpload} loading={loading} timeline={timeline} />
+            <div className="bg-white border text-sm border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">AI Provider</label>
+                <select 
+                  className="w-full bg-slate-50 border border-slate-200 rounded-md p-2 outline-none focus:ring-2 focus:ring-blue-500/20"
+                  value={providerConfig.provider}
+                  onChange={(e) => {
+                    const p = e.target.value as ProviderConfig["provider"];
+                    setProviderConfig(prev => ({ ...prev, provider: p, model: DEFAULT_MODELS[p] }));
+                  }}
+                  disabled={loading}
+                >
+                  <option value="builtin">Built-in (Free OpenRouter Models)</option>
+                  <option value="openrouter">Custom OpenRouter Key</option>
+                  <option value="openai">Custom OpenAI Key</option>
+                  <option value="anthropic">Custom Anthropic Key</option>
+                </select>
+              </div>
+              
+              {providerConfig.provider !== "builtin" && (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">API Key</label>
+                    <input
+                      type="password"
+                      disabled={loading}
+                      placeholder="sk-..."
+                      value={providerConfig.apiKey}
+                      onChange={(e) => setProviderConfig(p => ({ ...p, apiKey: e.target.value }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-md p-2 outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Model</label>
+                    <input
+                      type="text"
+                      disabled={loading}
+                      placeholder={DEFAULT_MODELS[providerConfig.provider]}
+                      value={providerConfig.model}
+                      onChange={(e) => setProviderConfig(p => ({ ...p, model: e.target.value }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-md p-2 outline-none focus:ring-2 focus:ring-blue-500/20 font-mono text-xs"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <Uploader onUpload={handleUpload} loading={loading} timeline={timeline} onAbort={handleAbort} />
             {error && (
               <div className="p-4 rounded-lg bg-red-100 border border-red-200 text-red-600 text-sm">
                 {error}

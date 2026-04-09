@@ -2,16 +2,17 @@
 
 import { useCallback } from "react";
 import { useDropzone } from "react-dropzone";
-import { UploadCloud, Loader2, CheckCircle2, XCircle, Bot } from "lucide-react";
+import { UploadCloud, Loader2, CheckCircle2, XCircle, Bot, X } from "lucide-react";
 import { TimelineEvent } from "@/app/page";
 
 interface UploaderProps {
   onUpload: (file: File) => void;
   loading: boolean;
   timeline: TimelineEvent[];
+  onAbort?: () => void;
 }
 
-export default function Uploader({ onUpload, loading, timeline }: UploaderProps) {
+export default function Uploader({ onUpload, loading, timeline, onAbort }: UploaderProps) {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0) {
@@ -48,9 +49,18 @@ export default function Uploader({ onUpload, loading, timeline }: UploaderProps)
         <input {...getInputProps()} />
         
         {loading ? (
-          <div className="flex flex-col items-center gap-3 z-10">
+          <div className="flex flex-col items-center gap-3 z-10 w-full">
             <Loader2 className="w-10 h-10 text-blue-500 animate-spin" />
             <p className="text-sm font-medium text-blue-600">Processing file...</p>
+            {onAbort && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); onAbort(); }}
+                className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-600 rounded-md text-xs font-semibold transition-colors shadow-sm"
+              >
+                <X className="w-3.5 h-3.5" />
+                Abort Request
+              </button>
+            )}
           </div>
         ) : (
           <>

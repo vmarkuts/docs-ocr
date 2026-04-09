@@ -17,10 +17,14 @@ export async function POST(req: NextRequest) {
         sendEvent("log", { message: "Reading uploaded document..." });
         const formData = await req.formData();
         const file = formData.get("file") as File | null;
+        let providerConfig = { provider: "builtin", apiKey: "", model: "" };
+        
+        try {
+          const configStr = formData.get("providerConfig");
+          if (configStr) providerConfig = JSON.parse(configStr.toString());
+        } catch(e) {}
 
-        if (!file) {
-          return sendError("No file provided");
-        }
+        if (!file) return sendError("No file provided");
 
         const buffer = Buffer.from(await file.arrayBuffer());
         let extractedData = "";
@@ -45,66 +49,125 @@ export async function POST(req: NextRequest) {
           return sendError("Unsupported file type");
         }
 
-        const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-        if (!OPENROUTER_API_KEY) {
-          return sendError("Missing OpenRouter API Key in server environment");
-        }
+        let modelsToTry: string[] = [];
+        let OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
-        const modelsToTry = [
-          "google/gemma-4-26b-a4b-it:free",
-          "nvidia/nemotron-3-super-120b-a12b:free",
-          "minimax/minimax-m2.5:free",
-          "liquid/lfm-2.5-1.2b-instruct:free"
-        ];
+        if (providerConfig.provider === "builtin") {
+          if (!OPENROUTER_API_KEY) return sendError("Missing Built-in OpenRouter API Key");
+          modelsToTry = [
+            "google/gemma-4-26b-a4b-it:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "minimax/minimax-m2.5:free",
+            "liquid/lfm-2.5-1.2b-instruct:free"
+          ];
+        } else if (providerConfig.provider === "openrouter") {
+          if (!providerConfig.apiKey) return sendError("Please provide your OpenRouter API Key");
+          OPENROUTER_API_KEY = providerConfig.apiKey;
+          modelsToTry = [providerConfig.model || "openrouter/auto"];
+        } else if (providerConfig.provider === "openai") {
+          if (!providerConfig.apiKey) return sendError("Please provide your OpenAI API Key");
+          modelsToTry = [providerConfig.model || "gpt-4o"];
+        } else if (providerConfig.provider === "anthropic") {
+          if (!providerConfig.apiKey) return sendError("Please provide your Anthropic API Key");
+          modelsToTry = [providerConfig.model || "claude-sonnet-4-5"];
+        }
 
         const promptText = `
-Extract the items from this supplier quote. Return ONLY a valid JSON array matching this schema perfectly: 
+You are a strict data extraction processor. Your ONLY output must be a valid JSON array. Do not write any conversational text, no explanations, no markdown formatting (do NOT use \`\`\`json).
+
+Extract the line items from the provided supplier quote. Map the data precisely into this JSON array schema:
+
 [
   {
-    "item": "string (name of item)",
-    "qty": number (quantity, 1 if not specified),
-    "unit_price": number (price per unit, parse as float),
-    "vendor": "string (name of supplier or Vendor Unknown)"
+    "item": "string (the name/description of the item)",
+    "qty": 1, // number (use 1 if quantity is missing)
+    "unit_price": 0.0, // number (the price per unit as float)
+    "vendor": "string (supplier name, or 'Vendor Unknown')"
   }
 ]
-No markdown wrapping, no extra text. Just the raw JSON array.
-`;
 
-        let contentArray: any[] = [];
-        if (isImage) {
-          contentArray = [
-            { type: "text", text: promptText },
-            { type: "image_url", image_url: { url: `data:${file.type};base64,${extractedData}` } }
-          ];
-        } else {
-          contentArray = [
-            { type: "text", text: promptText + "\n\nData:\n" + extractedData }
-          ];
-        }
+CRITICAL RULES:
+1. Return ONLY the array starting with '[' and ending with ']'.
+2. Ensure valid JSON syntax (no trailing commas, properly escaped quotes).
+3. If no items are found, return exactly [].
+`;
 
         let success = false;
 
         for (const model of modelsToTry) {
           sendEvent("status", { model, status: "trying" });
           
-          let payload = {
-            model: model,
-            messages: [{ role: "user", content: contentArray }]
-          };
-
           const abortController = new AbortController();
-          const timeoutId = setTimeout(() => abortController.abort(), 15000); // 15s max per model
+          const timeoutId = setTimeout(() => abortController.abort(), 25000);
 
           try {
-            const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify(payload),
-              signal: abortController.signal
-            });
+            let res: Response;
+
+            if (providerConfig.provider === "anthropic") {
+              let anthropicContent: any[] = [];
+              if (isImage) {
+                const b64 = extractedData.includes(",") ? extractedData.split(",")[1] : extractedData;
+                anthropicContent = [
+                  { type: "image", source: { type: "base64", media_type: file.type, data: b64 } },
+                  { type: "text", text: "Please extract items from this quote exactly as instructed." }
+                ];
+              } else {
+                anthropicContent = [ { type: "text", text: "Data to extract:\n" + extractedData } ];
+              }
+
+              const payload = {
+                model: model,
+                max_tokens: 2048,
+                system: promptText,
+                messages: [{ role: "user", content: anthropicContent }]
+              };
+
+              res = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                  "x-api-key": providerConfig.apiKey,
+                  "content-type": "application/json",
+                  "anthropic-version": "2023-06-01"
+                },
+                body: JSON.stringify(payload),
+                signal: abortController.signal
+              });
+            } else {
+              // OpenAI or OpenRouter logic
+              let contentArray: any[] = [];
+              if (isImage) {
+                contentArray = [
+                  { type: "text", text: promptText },
+                  { type: "image_url", image_url: { url: `data:${file.type};base64,${extractedData}` } }
+                ];
+              } else {
+                contentArray = [
+                  { type: "text", text: promptText + "\n\nData:\n" + extractedData }
+                ];
+              }
+
+              const endpoint = providerConfig.provider === "openai" 
+                 ? "https://api.openai.com/v1/chat/completions" 
+                 : "https://openrouter.ai/api/v1/chat/completions";
+              
+              const apiKey = providerConfig.provider === "openai" ? providerConfig.apiKey : OPENROUTER_API_KEY;
+
+              const payload = {
+                model: model,
+                messages: [{ role: "user", content: contentArray }]
+              };
+
+              res = await fetch(endpoint, {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${apiKey}`,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload),
+                signal: abortController.signal
+              });
+            }
+
             clearTimeout(timeoutId);
 
             if (!res.ok) {
@@ -114,15 +177,21 @@ No markdown wrapping, no extra text. Just the raw JSON array.
                 const errObj = JSON.parse(errText);
                 if (errObj.error?.code === 429) reason = "rate limit";
                 else if (res.status >= 500) reason = "overloaded";
-                else reason = errObj.error?.message || "error";
+                else reason = errObj.error?.message || errObj.error?.type || "error";
               } catch (_) { }
               
               sendEvent("status", { model, status: "failed", reason });
-              continue;
+              continue; // try next model if available
             }
 
             const data = await res.json();
-            const rawContent = data.choices?.[0]?.message?.content || "";
+            let rawContent = "";
+            if (providerConfig.provider === "anthropic") {
+              rawContent = data.content?.[0]?.text || "";
+            } else {
+              rawContent = data.choices?.[0]?.message?.content || "";
+            }
+
             const cleanJsonStr = rawContent.replace(/```json/g, "").replace(/```/g, "").trim();
 
             let parsedResults = null;
@@ -147,13 +216,15 @@ No markdown wrapping, no extra text. Just the raw JSON array.
           } catch (fetchErr: any) {
             clearTimeout(timeoutId);
             const isTimeout = fetchErr.name === 'AbortError' || fetchErr.message.includes('timeout');
-            sendEvent("status", { model, status: "failed", reason: isTimeout ? "timeout" : "network error" });
+            sendEvent("status", { model, status: "failed", reason: isTimeout ? "timeout/aborted" : "network error" });
             continue;
           }
         }
 
         if (!success) {
-          sendError("All free AI models are completely overloaded. Please try again later.");
+          sendError(providerConfig.provider === "builtin" 
+            ? "All free AI models are completely overloaded. Please try again later."
+            : "The API provider failed to process the request.");
         }
 
       } catch (err: any) {
